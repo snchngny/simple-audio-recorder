@@ -149,6 +149,8 @@ class AudioRecorder(QMainWindow):
         
         # Stereo Audio Data (N, 2)
         self.audio_data = np.zeros((0, 2), dtype=np.float32)
+        self.recorded_chunks = []
+        self.total_recorded_samples = 0
         self.audio_queue = queue.Queue()
         self.stream = None
         self.current_channel_l = 0
@@ -204,6 +206,20 @@ class AudioRecorder(QMainWindow):
         self.save_btn.setEnabled(False)
         ctrl_layout.addWidget(self.save_btn)
         
+        # Speed controls
+        speed_layout = QHBoxLayout()
+        speed_layout.addWidget(QLabel("速度:"))
+        self.speed_combo = QComboBox()
+        self.speed_combo.addItem("Default (1.0x)", 1.0)
+        self.speed_combo.currentIndexChanged.connect(self.on_trim_changed)
+        speed_layout.addWidget(self.speed_combo)
+        
+        self.rnd_speed_btn = QPushButton("🎲 ランダム速度")
+        self.rnd_speed_btn.clicked.connect(self.randomize_speed)
+        speed_layout.addWidget(self.rnd_speed_btn)
+        
+        ctrl_layout.addLayout(speed_layout)
+        
         ctrl_layout.addStretch()
         
         self.settings_btn = QPushButton("⚙️ 設定")
@@ -227,6 +243,13 @@ class AudioRecorder(QMainWindow):
             self.settings.setValue("save_dir", opts["save_dir"])
             self.status.showMessage("設定を保存しました", 3000)
             
+    def randomize_speed(self):
+        import random
+        new_speed = round(random.uniform(1.1, 3.0), 2)
+        label = f"Random ({new_speed}x)"
+        self.speed_combo.addItem(label, new_speed)
+        self.speed_combo.setCurrentIndex(self.speed_combo.count() - 1)
+            
     def toggle_record(self):
         if not self.is_recording:
             # Stop any playback
@@ -234,6 +257,8 @@ class AudioRecorder(QMainWindow):
                 self.auto_stop_playback()
                 
             self.audio_data = np.zeros((0, 2), dtype=np.float32)
+            self.recorded_chunks = []
+            self.total_recorded_samples = 0
             self.curve.setData([])
             self.update_trim_lines_visibility(False)
             
@@ -287,7 +312,18 @@ class AudioRecorder(QMainWindow):
             # Drain queue
             self.drain_queue()
             
+            if self.recorded_chunks:
+                self.audio_data = np.concatenate(self.recorded_chunks, axis=0)
+            else:
+                self.audio_data = np.zeros((0, 2), dtype=np.float32)
+            
             if len(self.audio_data) > 0:
+                # Update UI with full waveform downsampled for performance
+                mono_mix = np.mean(self.audio_data, axis=1)
+                step = max(1, len(mono_mix) // 5000)
+                x_axis = np.arange(len(mono_mix))
+                self.curve.setData(x=x_axis[::step], y=mono_mix[::step])
+                
                 self.update_trim_lines_visibility(True)
                 self.trim_start_line.setPos(0)
                 self.trim_end_line.setPos(len(self.audio_data))
@@ -335,12 +371,13 @@ class AudioRecorder(QMainWindow):
                 self.trim_end_line.setPos(start + 1)
                 
         # Status update
-        if not self.is_recording:
+        if not self.is_recording and hasattr(self, 'speed_combo'):
             s_idx = max(0, min(int(self.trim_start_line.value()), len(self.audio_data)))
             e_idx = max(0, min(int(self.trim_end_line.value()), len(self.audio_data)))
-            dur = (e_idx - s_idx) / self.sample_rate
+            speed = self.speed_combo.currentData()
+            dur = (e_idx - s_idx) / (self.sample_rate * speed)
             if dur > 0:
-                self.status.showMessage(f"トリミング範囲: {dur:.2f}秒 (Stereo)")
+                self.status.showMessage(f"トリミング範囲: {dur:.2f}秒 (Stereo, 速度: {speed}x)")
 
 
     def audio_callback(self, indata, frames, time, status):
@@ -359,24 +396,38 @@ class AudioRecorder(QMainWindow):
             except queue.Empty:
                 break
         if chunks:
-            new_data = np.concatenate(chunks, axis=0) # join along time dimension
-            self.audio_data = np.concatenate((self.audio_data, new_data), axis=0)
+            new_data = np.concatenate(chunks, axis=0)
+            self.recorded_chunks.append(new_data)
+            self.total_recorded_samples += len(new_data)
             return True
         return False
 
     def update_ui(self):
         if self.is_recording:
             if self.drain_queue():
-                # Display mixdown waveform
-                mono_mix = np.mean(self.audio_data, axis=1)
-                self.curve.setData(mono_mix)
-                # auto scroll view
-                data_len = len(self.audio_data)
-                view_len = self.sample_rate * 5 # Show last 5 seconds
-                if data_len > view_len:
-                    self.plot_widget.setXRange(data_len - view_len, data_len)
-                else:
-                    self.plot_widget.setXRange(0, data_len)
+                view_len = self.sample_rate * 5
+                recent_chunks = []
+                samples_collected = 0
+                for chunk in reversed(self.recorded_chunks):
+                    recent_chunks.append(chunk)
+                    samples_collected += len(chunk)
+                    if samples_collected >= view_len:
+                        break
+                
+                recent_chunks.reverse()
+                if recent_chunks:
+                    display_data = np.concatenate(recent_chunks, axis=0)
+                    if len(display_data) > view_len:
+                        display_data = display_data[-view_len:]
+                    
+                    mono_mix = np.mean(display_data, axis=1)
+                    data_len = self.total_recorded_samples
+                    start_x = max(0, data_len - len(display_data))
+                    x_axis = np.arange(start_x, start_x + len(display_data))
+                    
+                    step = max(1, len(mono_mix) // 2000)
+                    self.curve.setData(x=x_axis[::step], y=mono_mix[::step])
+                    self.plot_widget.setXRange(max(0, data_len - view_len), max(view_len, data_len))
 
     def get_trimmed_data(self):
         if len(self.audio_data) == 0:
@@ -394,19 +445,22 @@ class AudioRecorder(QMainWindow):
                 return
             
             try:
+                speed = self.speed_combo.currentData()
+                play_rate = int(self.sample_rate * speed)
+                
                 # Play stereo data
-                sd.play(trimmed, self.sample_rate)
+                sd.play(trimmed, play_rate)
                 self.is_playing = True
                 self.play_btn.setText("⏹ 停止")
                 
                 # Auto stop logic
-                duration_ms = int((len(trimmed) / self.sample_rate) * 1000)
+                duration_ms = int((len(trimmed) / play_rate) * 1000)
                 self.play_timer = QTimer()
                 self.play_timer.setSingleShot(True)
                 self.play_timer.timeout.connect(self.auto_stop_playback)
                 self.play_timer.start(duration_ms)
                 
-                self.status.showMessage("ステレオ再生中...")
+                self.status.showMessage(f"ステレオ再生中... (速度: {speed}x)")
             except Exception as e:
                 QMessageBox.warning(self, "エラー", f"再生エラー:\n{e}")
         else:
@@ -438,11 +492,13 @@ class AudioRecorder(QMainWindow):
         filepath, _ = QFileDialog.getSaveFileName(self, "保存", save_path, "WAV Files (*.wav)")
         if filepath:
             try:
+                speed = self.speed_combo.currentData()
+                save_rate = int(self.sample_rate * speed)
                 # Multiply by 32767 and cast to int16 for standard WAV format
                 scaled = np.clip(trimmed, -1.0, 1.0) # Prevent clipping wrap-around
                 scaled = np.int16(scaled * 32767) # Shape is (N, 2), wavfile can handle it properly!
-                wavfile.write(filepath, self.sample_rate, scaled)
-                self.status.showMessage(f"保存しました: {os.path.basename(filepath)}", 7000)
+                wavfile.write(filepath, save_rate, scaled)
+                self.status.showMessage(f"保存しました: {os.path.basename(filepath)} (速度: {speed}x)", 7000)
             except Exception as e:
                 QMessageBox.critical(self, "エラー", f"保存に失敗しました:\n{e}")
 

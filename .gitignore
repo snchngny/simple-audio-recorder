@@ -1,12 +1,30 @@
-# Environments
+# Python environments
 venv/
 env/
-.env
+.venv/
 
-# MacOS
+# Local secrets and machine-specific files
+.env
+.env.*
+!.env.example
 .DS_Store
 
-# Python
+# Python cache and test output
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+
+# Build artifacts
+build/
+dist/
+*.spec
+entitlements.plist
+
+# App/runtime output
+recordings/
+*.wav
+*.aiff
+*.aif
+*.mp3
+*.m4a
