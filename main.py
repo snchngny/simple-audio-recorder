@@ -465,6 +465,8 @@ class AudioRecorder(QMainWindow):
             
             if self.journal is not None:
                 self.audio_data = self.journal.read()
+                if self.journal.error:
+                    self.capture_warning = f'録音キャッシュの書込みに失敗した部分があります: {self.journal.error}'
             elif self.recorded_chunks:
                 self.audio_data = np.concatenate(self.recorded_chunks, axis=0)
             else:

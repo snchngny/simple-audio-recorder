@@ -1,6 +1,8 @@
 import numpy as np
 import subprocess
 import sys
+from unittest.mock import Mock
+import recovery
 
 from recovery import RecordingJournal, find_recordings
 
@@ -48,3 +50,17 @@ os._exit(0)
     np.testing.assert_array_equal(data, np.full((4800, 2), 0.25, dtype=np.float32))
     data._mmap.close()
     candidates[0].discard()
+
+
+def test_failed_disk_sync_preserves_readable_frames(tmp_path, monkeypatch):
+    journal = RecordingJournal(tmp_path, 48000)
+    journal.start()
+    data = np.full((10, 2), 0.25, dtype=np.float32)
+    journal.append(data)
+    monkeypatch.setattr(recovery.os, 'fsync', Mock(side_effect=OSError('disk full')))
+    samples = journal.read()
+    assert isinstance(journal.error, OSError)
+    assert journal.writer is None
+    np.testing.assert_array_equal(samples, data)
+    samples._mmap.close()
+    journal.discard()

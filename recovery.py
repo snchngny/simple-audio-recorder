@@ -20,6 +20,7 @@ class RecordingJournal:
         self.path = self.directory / f'{self.recording_id}.raw'
         self.metadata = self.directory / f'{self.recording_id}.json'
         self.writer = None
+        self.error = None
         self.owns_files = False
         self.lock = QLockFile(str(self.directory / f'{self.recording_id}.lock'))
         self.lock.setStaleLockTime(0)
@@ -33,18 +34,27 @@ class RecordingJournal:
         self.metadata.write_text(json.dumps({'sample_rate': self.sample_rate}), encoding='utf-8')
 
     def append(self, data):
-        self.writer.write(np.asarray(data, dtype='<f4').tobytes())
-        # OSへ渡し、プロセス異常終了でも書込み済み部分を復旧できるようにする
-        self.writer.flush()
+        try:
+            self.writer.write(np.asarray(data, dtype='<f4').tobytes())
+            # OSへ渡し、プロセス異常終了でも書込み済み部分を復旧できるようにする
+            self.writer.flush()
+        except OSError as error:
+            self.error = error
+            raise
 
     def close(self):
         if self.writer is not None:
+            writer, self.writer = self.writer, None
             try:
-                self.writer.flush()
-                os.fsync(self.writer.fileno())
+                writer.flush()
+                os.fsync(writer.fileno())
+            except OSError as error:
+                self.error = error
             finally:
-                self.writer.close()
-                self.writer = None
+                try:
+                    writer.close()
+                except OSError as error:
+                    self.error = error
 
     def read(self):
         self.close()

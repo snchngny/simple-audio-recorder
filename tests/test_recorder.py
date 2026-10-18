@@ -247,3 +247,19 @@ def test_recovered_recording_is_editable_and_can_be_exported(recorder, monkeypat
     rate, pcm = wavfile.read(output)
     assert rate == 48000
     np.testing.assert_array_equal(pcm, (data * 32767).astype(np.int16))
+
+
+def test_disk_write_failure_stops_input_and_keeps_written_audio(recorder, monkeypatch):
+    stream, _ = mock_input(monkeypatch, channels=2)
+    recorder.toggle_record()
+    data = np.full((4, 2), 0.25, dtype=np.float32)
+    recorder.audio_callback(data, len(data), None, None)
+    recorder.drain_queue()
+    monkeypatch.setattr(recorder.journal, 'append', Mock(side_effect=OSError('disk full')))
+    recorder.audio_callback(data, len(data), None, None)
+    recorder.update_ui()
+    assert not recorder.is_recording
+    np.testing.assert_array_equal(recorder.audio_data, data)
+    assert recorder.save_btn.isEnabled()
+    stream.stop.assert_called_once()
+    main.QMessageBox.critical.assert_called_once()
