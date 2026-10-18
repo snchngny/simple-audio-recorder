@@ -71,7 +71,8 @@ class SettingsDialog(QDialog):
     def populate_devices(self):
         try:
             devices = sd.query_devices()
-            input_devices = [d for d in devices if d['max_input_channels'] > 0]
+            input_devices = [(idx, d) for idx, d in enumerate(devices) if d['max_input_channels'] > 0]
+            hostapis = sd.query_hostapis()
             
             saved_device = self.settings.value("audio_device", type=int)
             default_device_idx = sd.default.device[0]
@@ -79,17 +80,19 @@ class SettingsDialog(QDialog):
             
             selected_idx = 0
             self.device_combo.blockSignals(True)
-            for i, d in enumerate(input_devices):
-                actual_idx = devices.index(d)
-                self.device_combo.addItem(f"{d['name']} ({d['max_input_channels']}ch)", actual_idx)
+            for i, (actual_idx, d) in enumerate(input_devices):
+                host = hostapis[d['hostapi']]['name']
+                self.device_combo.addItem(f"{d['name']} / {host} ({d['max_input_channels']}ch)", actual_idx)
                 if actual_idx == target_device_idx:
                     selected_idx = i
                     
             self.device_combo.setCurrentIndex(selected_idx)
             self.device_combo.blockSignals(False)
             self.update_channels()
+            if not input_devices:
+                self.device_combo.addItem("入力デバイスがありません", None)
         except Exception as e:
-            pass
+            self.device_combo.addItem(f"デバイス取得エラー: {e}", None)
 
     def update_channels(self):
         self.channel_l_combo.clear()
@@ -272,8 +275,14 @@ class AudioRecorder(QMainWindow):
             channel_r = self.settings.value("audio_channel_r", defaultValue=1, type=int)
                 
             try:
-                device_info = sd.query_devices(device_idx)
+                device_info = sd.query_devices(device_idx, 'input')
                 max_channels = device_info['max_input_channels']
+                if max_channels < 1:
+                    raise ValueError("入力チャンネルがありません。設定から入力デバイスを選択してください")
+                # Use the device's native rate (often 48 kHz on Windows).
+                self.sample_rate = int(device_info['default_samplerate'])
+                sd.check_input_settings(device=device_idx, channels=max_channels,
+                                        samplerate=self.sample_rate, dtype='float32')
                 
                 # Boundary check for channel index
                 if channel_l >= max_channels or channel_l < 0: channel_l = 0
@@ -287,9 +296,11 @@ class AudioRecorder(QMainWindow):
                     device=device_idx,
                     channels=max_channels,
                     samplerate=self.sample_rate,
+                    dtype='float32',
                     callback=self.audio_callback
                 )
                 self.stream.start()
+                self.settings_btn.setEnabled(False)
                 self.is_recording = True
                 self.rec_btn.setText("⏹ 録音停止")
                 self.rec_btn.setStyleSheet("color: red; font-weight: bold;")
@@ -298,6 +309,9 @@ class AudioRecorder(QMainWindow):
                 self.play_btn.setEnabled(False)
                 self.save_btn.setEnabled(False)
             except Exception as e:
+                if self.stream is not None:
+                    self.stream.close()
+                    self.stream = None
                 QMessageBox.critical(self, "エラー", f"オーディオデバイスの初期化に失敗しました:\n{e}")
         else:
             if self.stream is not None:
@@ -306,6 +320,7 @@ class AudioRecorder(QMainWindow):
                 self.stream = None
                 
             self.is_recording = False
+            self.settings_btn.setEnabled(True)
             self.rec_btn.setText("🔴 録音")
             self.rec_btn.setStyleSheet("font-weight: bold;")
             
@@ -335,7 +350,7 @@ class AudioRecorder(QMainWindow):
                 
                 # Check for macOS absolute silence (Microphone Permission Issue)
                 if np.max(np.abs(self.audio_data)) < 0.0001:
-                    self.status.showMessage("⚠️警告: 無音です。Macのマイク権限や、設定(⚙️)のL/R割当を確認してください。")
+                    self.status.showMessage("⚠️ 無音です。OSのマイク権限と設定の入力デバイス・L/R割当を確認してください")
                 else:
                     self.status.showMessage(f"録音完了 {dur:.1f}秒。緑と赤の線をドラッグしてトリミング長を調整できます。")
 
@@ -503,6 +518,11 @@ class AudioRecorder(QMainWindow):
                 QMessageBox.critical(self, "エラー", f"保存に失敗しました:\n{e}")
 
     def closeEvent(self, event):
+        self.timer.stop()
+        if self.stream is not None:
+            self.stream.stop()
+            self.stream.close()
+            self.stream = None
         sd.stop()
         event.accept()
 
@@ -512,4 +532,8 @@ if __name__ == "__main__":
     app.setStyle('Fusion')
     window = AudioRecorder()
     window.show()
+    if '--smoke-test' in sys.argv:
+        # Exercise the packaged Qt plugins and PortAudio without opening a microphone.
+        sd.query_hostapis()
+        QTimer.singleShot(200, app.quit)
     sys.exit(app.exec())
