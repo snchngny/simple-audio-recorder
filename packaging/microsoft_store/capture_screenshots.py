@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 import numpy as np
 from PyQt6.QtCore import QSettings
-from PyQt6.QtGui import QFont, QFontDatabase
+from PyQt6.QtGui import QFont, QFontDatabase, QFontMetrics
 from PyQt6.QtWidgets import QApplication
 from main import AudioRecorder
 
@@ -19,10 +19,16 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     app = QApplication([])
     # offscreenのWindows Qtは既定フォントだけでは日本語が欠けることがある
-    japanese_font = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts/meiryo.ttc'
+    japanese_font = Path(os.environ.get('STORE_SCREENSHOT_FONT') or
+                         str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts/meiryo.ttc'))
     if japanese_font.is_file():
-        QFontDatabase.addApplicationFont(str(japanese_font))
-        app.setFont(QFont('Meiryo', 10))
+        font_id = QFontDatabase.addApplicationFont(str(japanese_font))
+        families = QFontDatabase.applicationFontFamilies(font_id)
+        if not families:
+            raise RuntimeError('画像用フォントを読み込めませんでした')
+        app.setFont(QFont(families[0], 10))
+    if not all(QFontMetrics(app.font()).inFontUcs4(ord(char)) for char in '録音保存速度'):
+        raise RuntimeError('日本語を描画できません。STORE_SCREENSHOT_FONTに日本語フォントを指定してください')
     app.setStyle('Fusion')
     window = AudioRecorder(recovery_dir=ROOT / 'build/screenshot-recovery', restore=False)
     window.settings = QSettings(str(ROOT / 'build/screenshot-settings.ini'), QSettings.Format.IniFormat)

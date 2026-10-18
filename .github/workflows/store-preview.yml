@@ -28,7 +28,20 @@ jobs:
         run: python packaging/build.py --bundle-only
       - name: Create unsigned preview MSIX
         run: python packaging/microsoft_store/build_msix.py --development
+      - name: Get Japanese font for screenshots (SIL OFL 1.1)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: notofonts/noto-cjk
+          ref: f8d157532fbfaeda587e826d4cd5b21a49186f7c
+          path: build/store-font
+          sparse-checkout: |
+            Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf
+            Sans/LICENSE
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: Render screenshots with synthetic sound
+        env:
+          STORE_SCREENSHOT_FONT: ${{ github.workspace }}/build/store-font/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf
         run: python packaging/microsoft_store/capture_screenshots.py
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

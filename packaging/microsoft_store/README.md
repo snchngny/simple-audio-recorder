@@ -50,6 +50,8 @@ Store配布MSIXは審査後にMicrosoftが署名する。直接配布のEXEの�
 
 `python packaging/microsoft_store/capture_screenshots.py` は実際のQt画面に自作合成音を表示し、`dist/store-assets/` に1366×768のPNGを作る。音声処理の実機テストとは区別する。提出版の画面と日本語表示を目視確認する
 
+英語WindowsのCIには日本語フォントがないため、画像生成時だけ[Noto Sans CJK JP](https://github.com/notofonts/noto-cjk)（SIL OFL 1.1）を固定commitから読み込む。フォントはアプリやMSIXへ同梱しない。ローカルで別のフォントを使う場合は `STORE_SCREENSHOT_FONT` にそのファイルを指定する。日本語を描画できない場合は画像生成を失敗させる
+
 審査メモ例:
 
 > ログイン不要。設定で「PC再生音（既定の出力 / WASAPI）」を選び、Windowsでテスト音を再生して録音してください。停止後、緑と赤の線で範囲選択、ランダム速度、再生、保存の順に確認できます。マイクはWindowsのデスクトップアプリ向けアクセス許可が必要です。保護コンテンツの録音やDRM回避機能はありません。runFullTrustはPyQt6/PortAudio/SoundCardを使う通常のWin32デスクトップ録音処理に必要で、管理者権限を要求しません。元録音の復旧キャッシュは端末内だけに保持します。
