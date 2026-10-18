@@ -18,10 +18,11 @@ def app():
 
 @pytest.fixture
 def recorder(app, tmp_path, monkeypatch):
-    window = main.AudioRecorder()
+    window = main.AudioRecorder(recovery_dir=tmp_path / 'recovery', restore=False)
     window.settings = QSettings(str(tmp_path / 'settings.ini'), QSettings.Format.IniFormat)
     monkeypatch.setattr(main.sd, 'stop', Mock())
     monkeypatch.setattr(main.QMessageBox, 'critical', Mock())
+    monkeypatch.setattr(main.QMessageBox, 'question', lambda *args: main.QMessageBox.StandardButton.Discard)
     yield window
     window.close()
 
@@ -165,3 +166,84 @@ def test_play_cursor_tracks_trim_range_and_speed_and_hides_on_stop(recorder, mon
     assert recorder.play_cursor.value() == 108000
     recorder.auto_stop_playback()
     assert not recorder.play_cursor.isVisible()
+
+
+def test_unsaved_recording_cancel_preserves_audio(recorder, monkeypatch):
+    mock_input(monkeypatch)
+    recorder.audio_data = np.ones((4, 2), dtype=np.float32)
+    recorder.dirty = True
+    monkeypatch.setattr(main.QMessageBox, 'question', lambda *args: main.QMessageBox.StandardButton.Cancel)
+    recorder.toggle_record()
+    assert not recorder.is_recording
+    assert len(recorder.audio_data) == 4
+    assert not recorder.close()
+    assert recorder.timer.isActive()
+    recorder.dirty = False
+
+
+def test_failed_new_input_preserves_previous_recording(recorder, monkeypatch):
+    stream, _ = mock_input(monkeypatch)
+    stream.start.side_effect = RuntimeError('unavailable')
+    recorder.audio_data = np.ones((4, 2), dtype=np.float32)
+    recorder.dirty = True
+    recorder.sample_rate = 44100
+    recorder.toggle_record()
+    assert len(recorder.audio_data) == 4
+    assert recorder.sample_rate == 44100
+
+
+def test_meter_detects_clipping_and_recent_memory_is_bounded(recorder, monkeypatch):
+    mock_input(monkeypatch, channels=2)
+    recorder.toggle_record()
+    for _ in range(12):
+        recorder.audio_callback(np.ones((48000, 2), dtype=np.float32), 48000, None, None)
+        recorder.drain_queue()
+    assert sum(len(c) for c in recorder.recorded_chunks) <= 48000 * 6
+    assert recorder.level_meter.value() == 600
+    assert '音割れ' in recorder.level_meter.format()
+    recorder.toggle_record()
+    assert isinstance(recorder.audio_data, np.memmap)
+    assert len(recorder.audio_data) == 48000 * 12
+
+
+def test_save_cancel_keeps_unsaved_state(recorder, monkeypatch):
+    recorder.audio_data = np.ones((4, 2), dtype=np.float32)
+    recorder.trim_end_line.setPos(4)
+    recorder.dirty = True
+    monkeypatch.setattr(main.QMessageBox, 'question', lambda *args: main.QMessageBox.StandardButton.Save)
+    monkeypatch.setattr(main.QFileDialog, 'getSaveFileName', lambda *args: ('', ''))
+    assert not recorder.confirm_unsaved()
+    assert recorder.dirty
+
+
+def test_failed_export_keeps_existing_file_and_unsaved_audio(recorder, monkeypatch, tmp_path):
+    recorder.audio_data = np.ones((4, 2), dtype=np.float32)
+    recorder.trim_end_line.setPos(4)
+    recorder.dirty = True
+    output = tmp_path / 'existing.wav'
+    output.write_bytes(b'existing')
+    monkeypatch.setattr(main.QFileDialog, 'getSaveFileName', lambda *args: (str(output), ''))
+    monkeypatch.setattr(main.wavfile, 'write', Mock(side_effect=OSError('disk full')))
+    assert not recorder.save_audio()
+    assert output.read_bytes() == b'existing'
+    assert recorder.dirty
+    assert list(tmp_path.glob('*.wav')) == [output]
+
+
+def test_recovered_recording_is_editable_and_can_be_exported(recorder, monkeypatch, tmp_path):
+    journal = main.RecordingJournal(recorder.recovery_dir, 48000)
+    journal.start()
+    data = np.array([[0.25, -0.5], [0.1, 0.2]], dtype=np.float32)
+    journal.append(data)
+    journal.close()
+    journal.lock.unlock()
+    monkeypatch.setattr(main.QMessageBox, 'question', lambda *args: main.QMessageBox.StandardButton.Yes)
+    recorder.offer_recovery()
+    np.testing.assert_array_equal(recorder.get_trimmed_data(), data)
+    assert recorder.dirty
+    output = tmp_path / 'recovered.wav'
+    monkeypatch.setattr(main.QFileDialog, 'getSaveFileName', lambda *args: (str(output), ''))
+    assert recorder.save_audio()
+    rate, pcm = wavfile.read(output)
+    assert rate == 48000
+    np.testing.assert_array_equal(pcm, (data * 32767).astype(np.int16))

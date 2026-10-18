@@ -3,19 +3,23 @@ import os
 import queue
 import datetime
 import time
+import tempfile
+from collections import deque
+from pathlib import Path
 import numpy as np
 import sounddevice as sd
 from scipy.io import wavfile
 import pyqtgraph as pg
 from loopback import LOOPBACK_DEVICE, LoopbackStream, loopback_info
 from audio_processing import EXPORT_RATE, render_sample
+from recovery import RecordingJournal, find_recordings
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
     QWidget, QPushButton, QLabel, QComboBox, QFileDialog, 
-    QMessageBox, QDialog, QDialogButtonBox, QStatusBar
+    QMessageBox, QDialog, QDialogButtonBox, QStatusBar, QProgressBar
 )
-from PyQt6.QtCore import QTimer, QSettings, Qt, pyqtSignal
+from PyQt6.QtCore import QTimer, QSettings, QStandardPaths, Qt, pyqtSignal
 
 class SettingsDialog(QDialog):
     def __init__(self, settings, parent=None):
@@ -145,12 +149,18 @@ class SettingsDialog(QDialog):
 
 
 class AudioRecorder(QMainWindow):
-    def __init__(self):
+    def __init__(self, recovery_dir=None, restore=True):
         super().__init__()
         self.setWindowTitle("Simple Audio Recorder (Stereo)")
         self.resize(600, 250)
         
         self.settings = QSettings("com.python.audiorec", "SimpleAudioRecorder")
+        self.recovery_dir = Path(recovery_dir) if recovery_dir else Path(
+            QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / 'recovery'
+        self.journal = None
+        self.dirty = False
+        self.recording_peak = 0.0
+        self.capture_warning = ''
         
         # State
         self.is_recording = False
@@ -159,9 +169,9 @@ class AudioRecorder(QMainWindow):
         
         # Stereo Audio Data (N, 2)
         self.audio_data = np.zeros((0, 2), dtype=np.float32)
-        self.recorded_chunks = []
+        self.recorded_chunks = deque()
         self.total_recorded_samples = 0
-        self.audio_queue = queue.Queue()
+        self.audio_queue = queue.Queue(maxsize=200)
         self.stream = None
         self.current_channel_l = 0
         self.current_channel_r = 1
@@ -242,11 +252,82 @@ class AudioRecorder(QMainWindow):
         ctrl_layout.addWidget(self.settings_btn)
         
         layout.addLayout(ctrl_layout)
+        meter_layout = QHBoxLayout()
+        meter_layout.addWidget(QLabel('入力ピーク:'))
+        self.level_meter = QProgressBar()
+        self.level_meter.setRange(0, 600)
+        self.level_meter.setValue(0)
+        self.level_meter.setFormat('待機中')
+        meter_layout.addWidget(QLabel('L'))
+        meter_layout.addWidget(self.level_meter)
+        self.right_level_meter = QProgressBar()
+        self.right_level_meter.setRange(0, 600)
+        self.right_level_meter.setValue(0)
+        self.right_level_meter.setFormat('待機中')
+        meter_layout.addWidget(QLabel('R'))
+        meter_layout.addWidget(self.right_level_meter)
+        layout.addLayout(meter_layout)
         
         # Timer for UI update
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_ui)
         self.timer.start(50)
+        if restore:
+            QTimer.singleShot(0, self.offer_recovery)
+
+    def confirm_unsaved(self):
+        if not self.dirty:
+            return True
+        choice = QMessageBox.question(self, '未保存のサンプル',
+            '現在の範囲・速度のサンプルを保存しますか？\n破棄すると元録音の復旧キャッシュも削除されます。',
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        if choice == QMessageBox.StandardButton.Save:
+            return self.save_audio()
+        return choice == QMessageBox.StandardButton.Discard
+
+    def release_recording(self):
+        if isinstance(self.audio_data, np.memmap):
+            self.audio_data._mmap.close()
+        self.audio_data = np.zeros((0, 2), dtype=np.float32)
+        if self.journal is not None:
+            self.journal.discard()
+            self.journal = None
+
+    def show_recording(self):
+        if not len(self.audio_data):
+            return
+        step = max(1, len(self.audio_data) // 5000)
+        display = self.audio_data[::step]
+        self.curve.setData(x=np.arange(0, len(self.audio_data), step), y=np.mean(display, axis=1))
+        self.update_trim_lines_visibility(True)
+        self.trim_start_line.setPos(0)
+        self.trim_end_line.setPos(len(self.audio_data))
+        self.plot_widget.setXRange(0, len(self.audio_data))
+        self.play_btn.setEnabled(True)
+        self.save_btn.setEnabled(True)
+        self.dirty = True
+
+    def offer_recovery(self):
+        for journal in find_recordings(self.recovery_dir):
+            choice = QMessageBox.question(self, '録音の復旧',
+                '前回の録音が端末内に残っています。復旧しますか？\n「いいえ」でこの録音を削除します。',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes)
+            if choice == QMessageBox.StandardButton.Yes:
+                try:
+                    self.audio_data = journal.read()
+                    self.journal = journal
+                    self.sample_rate = journal.sample_rate
+                    self.show_recording()
+                    self.status.showMessage('元録音を復旧しました。範囲と速度を選び直して保存してください')
+                except OSError as error:
+                    QMessageBox.warning(self, '復旧エラー', str(error))
+                return
+            if choice == QMessageBox.StandardButton.No:
+                journal.discard()
+            else:
+                return
         
     def open_settings(self):
         dlg = SettingsDialog(self.settings, self)
@@ -267,16 +348,12 @@ class AudioRecorder(QMainWindow):
             
     def toggle_record(self):
         if not self.is_recording:
+            if not self.confirm_unsaved():
+                return
             # Stop any playback
             if self.is_playing:
                 self.auto_stop_playback()
                 
-            self.audio_data = np.zeros((0, 2), dtype=np.float32)
-            self.recorded_chunks = []
-            self.total_recorded_samples = 0
-            self.curve.setData([])
-            self.update_trim_lines_visibility(False)
-            
             # Load Device Settings
             device_idx = self.settings.value("audio_device", defaultValue=-1, type=int)
             if device_idx is None or device_idx == -1:
@@ -286,6 +363,8 @@ class AudioRecorder(QMainWindow):
             channel_l = self.settings.value("audio_channel_l", defaultValue=0, type=int)
             channel_r = self.settings.value("audio_channel_r", defaultValue=1, type=int)
                 
+            new_journal = None
+            old_rate = self.sample_rate
             try:
                 is_loopback = device_idx == LOOPBACK_DEVICE
                 device_info = loopback_info() if is_loopback else sd.query_devices(device_idx, 'input')
@@ -304,6 +383,10 @@ class AudioRecorder(QMainWindow):
                     
                 self.current_channel_l = channel_l
                 self.current_channel_r = channel_r
+                new_journal = RecordingJournal(self.recovery_dir, self.sample_rate)
+                new_journal.start()
+                while not self.audio_queue.empty():
+                    self.audio_queue.get_nowait()
 
                 # Start stream fetching ALL channels to prevent CoreAudio slicing issues
                 self.stream = LoopbackStream(device_info, self.audio_callback) if is_loopback else sd.InputStream(
@@ -314,6 +397,15 @@ class AudioRecorder(QMainWindow):
                     callback=self.audio_callback
                 )
                 self.stream.start()
+                self.release_recording()
+                self.journal = new_journal
+                self.recorded_chunks = deque()
+                self.total_recorded_samples = 0
+                self.recording_peak = 0.0
+                self.capture_warning = ''
+                self.dirty = False
+                self.curve.setData([])
+                self.update_trim_lines_visibility(False)
                 self.settings_btn.setEnabled(False)
                 self.is_recording = True
                 self.rec_btn.setText("⏹ 録音停止")
@@ -323,14 +415,21 @@ class AudioRecorder(QMainWindow):
                 self.play_btn.setEnabled(False)
                 self.save_btn.setEnabled(False)
             except Exception as e:
+                self.sample_rate = old_rate
                 if self.stream is not None:
                     self.stream.close()
                     self.stream = None
+                if new_journal is not None:
+                    new_journal.discard()
                 QMessageBox.critical(self, "エラー", f"オーディオデバイスの初期化に失敗しました:\n{e}")
         else:
             if self.stream is not None:
-                self.stream.stop()
-                self.stream.close()
+                try:
+                    self.stream.stop()
+                except Exception as error:
+                    self.capture_warning = f'録音停止時のエラー: {error}'
+                finally:
+                    self.stream.close()
                 self.stream = None
                 
             self.is_recording = False
@@ -339,34 +438,32 @@ class AudioRecorder(QMainWindow):
             self.rec_btn.setStyleSheet("font-weight: bold;")
             
             # Drain queue
-            self.drain_queue()
+            try:
+                self.drain_queue()
+            except OSError as error:
+                self.capture_warning = f'録音キャッシュへの書込みエラー: {error}'
+                QMessageBox.critical(self, '録音の保存エラー', self.capture_warning)
             
-            if self.recorded_chunks:
+            if self.journal is not None:
+                self.audio_data = self.journal.read()
+            elif self.recorded_chunks:
                 self.audio_data = np.concatenate(self.recorded_chunks, axis=0)
             else:
                 self.audio_data = np.zeros((0, 2), dtype=np.float32)
             
             if len(self.audio_data) > 0:
                 # Update UI with full waveform downsampled for performance
-                mono_mix = np.mean(self.audio_data, axis=1)
-                step = max(1, len(mono_mix) // 5000)
-                x_axis = np.arange(len(mono_mix))
-                self.curve.setData(x=x_axis[::step], y=mono_mix[::step])
-                
-                self.update_trim_lines_visibility(True)
-                self.trim_start_line.setPos(0)
-                self.trim_end_line.setPos(len(self.audio_data))
-                self.plot_widget.setXRange(0, len(self.audio_data))
-                self.play_btn.setEnabled(True)
-                self.save_btn.setEnabled(True)
+                self.show_recording()
                 
                 dur = len(self.audio_data) / self.sample_rate
                 
                 # Check for macOS absolute silence (Microphone Permission Issue)
-                if np.max(np.abs(self.audio_data)) < 0.0001:
+                if self.recording_peak < 0.0001:
                     self.status.showMessage("⚠️ 無音です。OSのマイク権限と設定の入力デバイス・L/R割当を確認してください")
                 else:
                     self.status.showMessage(f"録音完了 {dur:.1f}秒。緑と赤の線をドラッグしてトリミング長を調整できます。")
+                if self.capture_warning:
+                    self.status.showMessage(self.capture_warning)
 
     def update_trim_lines_visibility(self, visible):
         self.trim_start_line.setVisible(visible)
@@ -401,6 +498,7 @@ class AudioRecorder(QMainWindow):
                 
         # Status update
         if not self.is_recording and hasattr(self, 'speed_combo'):
+            self.dirty = True
             s_idx = max(0, min(int(self.trim_start_line.value()), len(self.audio_data)))
             e_idx = max(0, min(int(self.trim_end_line.value()), len(self.audio_data)))
             speed = self.speed_combo.currentData()
@@ -415,7 +513,12 @@ class AudioRecorder(QMainWindow):
         safe_r_idx = min(self.current_channel_r, indata.shape[1] - 1)
         # Extract stereo frame
         stereo_frame = indata[:, [safe_l_idx, safe_r_idx]].copy()
-        self.audio_queue.put(stereo_frame)
+        if status:
+            self.capture_warning = '入力に欠落の可能性があります。録音デバイスと負荷を確認してください'
+        try:
+            self.audio_queue.put_nowait(stereo_frame)
+        except queue.Full:
+            self.capture_warning = '入力処理が追いつかず録音に欠落が発生しました。短い録音で再試行してください'
 
     def drain_queue(self):
         chunks = []
@@ -426,8 +529,25 @@ class AudioRecorder(QMainWindow):
                 break
         if chunks:
             new_data = np.concatenate(chunks, axis=0)
+            if self.journal is not None:
+                self.journal.append(new_data)
             self.recorded_chunks.append(new_data)
             self.total_recorded_samples += len(new_data)
+            # 描画用は直近約5秒だけ。元録音は端末内のファイルに保持する
+            recent_length = sum(len(chunk) for chunk in self.recorded_chunks)
+            while len(self.recorded_chunks) > 1 and recent_length - len(self.recorded_chunks[0]) >= self.sample_rate * 5:
+                recent_length -= len(self.recorded_chunks.popleft())
+            peak = float(np.max(np.abs(new_data)))
+            self.recording_peak = max(self.recording_peak, peak)
+            for channel, meter in enumerate((self.level_meter, self.right_level_meter)):
+                channel_peak = float(np.max(np.abs(new_data[:, channel])))
+                db = 20 * np.log10(max(channel_peak, 1e-6))
+                meter.setValue(int(np.clip(db + 60, 0, 60) * 10))
+                meter.setFormat(f'{db:.1f} dBFS' if channel_peak else '無音')
+                meter.setStyleSheet('QProgressBar::chunk { background: #d32f2f; }' if channel_peak >= 1 else '')
+                if channel_peak >= 1:
+                    meter.setFormat(f'{db:.1f} dBFS / 音割れの可能性')
+            self.dirty = True
             return True
         return False
 
@@ -443,7 +563,23 @@ class AudioRecorder(QMainWindow):
             QMessageBox.warning(self, '録音が中断されました', str(error))
             return
         if self.is_recording:
-            if self.drain_queue():
+            try:
+                received = self.drain_queue()
+            except OSError as error:
+                # 既に書けた部分は残し、録音を止めてディスクエラーを伝える
+                if self.stream is not None:
+                    self.stream.stop()
+                    self.stream.close()
+                    self.stream = None
+                self.is_recording = False
+                self.rec_btn.setText('🔴 録音')
+                self.settings_btn.setEnabled(True)
+                if self.journal is not None:
+                    self.audio_data = self.journal.read()
+                    self.show_recording()
+                QMessageBox.critical(self, '録音の保存エラー', f'端末内キャッシュへの書込みに失敗しました。空き容量を確認してください。\n{error}')
+                return
+            if received:
                 view_len = self.sample_rate * 5
                 recent_chunks = []
                 samples_collected = 0
@@ -523,7 +659,7 @@ class AudioRecorder(QMainWindow):
     def save_audio(self):
         trimmed = self.get_trimmed_data()
         if trimmed is None or len(trimmed) == 0:
-            return
+            return False
             
         default_dir = os.path.expanduser("~/Downloads")
         saved_dir = self.settings.value("save_dir", defaultValue=default_dir)
@@ -537,31 +673,47 @@ class AudioRecorder(QMainWindow):
         
         filepath, _ = QFileDialog.getSaveFileName(self, "保存", save_path, "WAV Files (*.wav)")
         if filepath:
+            temporary = None
             try:
                 speed = self.speed_combo.currentData()
                 rendered = render_sample(trimmed, self.sample_rate, speed)
                 # Multiply by 32767 and cast to int16 for standard WAV format
                 scaled = np.clip(rendered, -1.0, 1.0) # Prevent clipping wrap-around
                 scaled = np.int16(scaled * 32767) # Shape is (N, 2), wavfile can handle it properly!
-                wavfile.write(filepath, EXPORT_RATE, scaled)
+                with tempfile.NamedTemporaryFile(dir=Path(filepath).parent, suffix='.wav', delete=False) as temp:
+                    temporary = Path(temp.name)
+                wavfile.write(temporary, EXPORT_RATE, scaled)
+                os.replace(temporary, filepath)
+                self.dirty = False
                 self.status.showMessage(f"保存しました: {os.path.basename(filepath)} (速度: {speed}x)", 7000)
+                return True
             except Exception as e:
                 QMessageBox.critical(self, "エラー", f"保存に失敗しました:\n{e}")
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+        return False
 
     def closeEvent(self, event):
+        if self.is_recording:
+            self.toggle_record()
+        if not self.confirm_unsaved():
+            event.ignore()
+            return
         self.timer.stop()
         if self.stream is not None:
             self.stream.stop()
             self.stream.close()
             self.stream = None
         sd.stop()
+        self.release_recording()
         event.accept()
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
-    window = AudioRecorder()
+    window = AudioRecorder(restore='--smoke-test' not in sys.argv)
     window.show()
     if '--smoke-test' in sys.argv:
         # Exercise the packaged Qt plugins and PortAudio without opening a microphone.
