@@ -100,6 +100,7 @@ def main():
         parser.error('Windows x64上で実行してください')
     identity = read_identity(args.identity, args.development)
     status = subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)
+    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     if not args.development and status.strip():
         parser.error('提出用は検証・commit済みのclean checkoutで作成してください')
     version = (ROOT / 'VERSION').read_text().strip()
@@ -133,7 +134,12 @@ def main():
     if result.returncode:
         print(log.read_text(encoding='utf-8', errors='replace')[-5000:], file=sys.stderr)
         raise RuntimeError(f'MakeAppx検証に失敗しました: {log}')
-    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    final_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    final_status = subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)
+    if final_commit != commit or final_status != status or any(
+            hashlib.sha256((ROOT / path).read_bytes()).hexdigest() != expected
+            for path, expected in provenance['inputs'].items()):
+        raise RuntimeError('梱包中にソースが変わりました。このMSIXは提出せず、再ビルドしてください')
     receipt = {'version': version, 'commit': commit, 'dirty': bool(status.strip()),
                'development_identity': args.development, 'identity': identity,
                'sha256': hashlib.sha256(output.read_bytes()).hexdigest(),
