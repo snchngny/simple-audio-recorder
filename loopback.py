@@ -2,6 +2,7 @@
 import ctypes
 import sys
 import threading
+import warnings
 
 if sys.platform == 'win32':
     import soundcard
@@ -54,11 +55,19 @@ class LoopbackStream:
             uninitialize = initialize_com()
             source = soundcard.get_microphone(self.info['speaker_id'], include_loopback=True)
             rate = self.info['default_samplerate']
-            with source.recorder(samplerate=rate, channels=self.info['max_input_channels']) as recorder:
+            with source.recorder(samplerate=rate, channels=self.info['max_input_channels'],
+                                 blocksize=rate // 5) as recorder:
                 self._ready.set()
                 while not self._stop.is_set():
-                    data = recorder.record(numframes=rate // 10)
-                    self.callback(data, len(data), None, None)
+                    warning_type = getattr(soundcard, 'SoundcardRuntimeWarning', RuntimeWarning)
+                    if not isinstance(warning_type, type):
+                        warning_type = RuntimeWarning
+                    with warnings.catch_warnings(record=True) as notices:
+                        warnings.simplefilter('always', warning_type)
+                        data = recorder.record(numframes=rate // 10)
+                    status = 'WASAPI data discontinuity' if any(
+                        issubclass(item.category, warning_type) for item in notices) else None
+                    self.callback(data, len(data), None, status)
         except Exception as error:
             self.error = error
         finally:
