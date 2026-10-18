@@ -11,6 +11,7 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 30
     env:
+      PYTHONUTF8: '1'
       QT_QPA_PLATFORM: offscreen
       PYQTGRAPH_QT_LIB: PyQt6
     steps:
