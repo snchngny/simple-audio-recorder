@@ -2,6 +2,7 @@
 venv/
 env/
 .venv/
+.local/
 
 # Local secrets and machine-specific files
 .env

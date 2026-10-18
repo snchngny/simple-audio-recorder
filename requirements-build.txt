@@ -1,0 +1,4 @@
+-r requirements.txt
+pyinstaller==6.22.3
+pip-licenses==5.5.5
+pytest==9.1.1
