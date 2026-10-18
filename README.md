@@ -24,6 +24,8 @@ Windowsの発行元署名、MacのDeveloper ID署名・Apple公証は未設定�
 3. 緑・赤の線で保存する範囲を選び、「再生」で確認
 4. 「保存」でWAVを書き出す
 
+再生中は黒い縦線が現在位置を示す。選択範囲の先頭から再生速度に合わせて進み、停止時は非表示になる
+
 モノラル入力は左右へ同じ音を配置。録音レートはデバイスの既定値を使用。同名デバイスはMME・DirectSound・WASAPI等のAPI名で区別できる
 ランダム速度は再生速度と音程を一緒に変え、保存WAVにも反映する。音程を維持するテンポ変更ではない
 
@@ -72,9 +74,9 @@ Windowsでは[Inno Setup 6](https://jrsoftware.org/isinfo.php)が必要
 リリース時は `VERSION` を更新してcommitし、その版と一致するタグをpushする
 
 ```bash
-git tag v0.3.0
+git tag v0.3.1
 git push origin main
-git push origin v0.3.0
+git push origin v0.3.1
 ```
 
 全OS成功後、インストーラー・対応ソース・依存版一覧・ライセンス・SHA256を同じタグの下書きReleaseへ添付

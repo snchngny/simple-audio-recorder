@@ -140,3 +140,27 @@ def test_loopback_runtime_error_stops_recording_and_keeps_audio(recorder, monkey
     assert recorder.stream is None
     np.testing.assert_array_equal(recorder.audio_data, data)
     warning.assert_called_once()
+
+
+def test_play_cursor_tracks_trim_range_and_speed_and_hides_on_stop(recorder, monkeypatch):
+    recorder.sample_rate = 48000
+    recorder.audio_data = np.zeros((144000, 2), dtype=np.float32)
+    recorder.trim_end_line.setPos(108000)
+    recorder.trim_start_line.setPos(12000)
+    recorder.speed_combo.addItem('2x', 2.0)
+    recorder.speed_combo.setCurrentIndex(1)
+    monkeypatch.setattr(main.sd, 'play', Mock())
+    now = [100.0]
+    monkeypatch.setattr(main.time, 'monotonic', lambda: now[0])
+    assert not recorder.play_cursor.isVisible()
+    recorder.toggle_play()
+    assert recorder.play_cursor.isVisible()
+    assert recorder.play_cursor.value() == 12000
+    now[0] += 0.25
+    recorder.update_ui()
+    assert recorder.play_cursor.value() == 36000
+    now[0] += 2
+    recorder.update_ui()
+    assert recorder.play_cursor.value() == 108000
+    recorder.auto_stop_playback()
+    assert not recorder.play_cursor.isVisible()

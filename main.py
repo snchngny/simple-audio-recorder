@@ -2,6 +2,7 @@ import sys
 import os
 import queue
 import datetime
+import time
 import numpy as np
 import sounddevice as sd
 from scipy.io import wavfile
@@ -195,6 +196,11 @@ class AudioRecorder(QMainWindow):
         self.trim_end_line.sigPositionChanged.connect(self.on_trim_changed)
         
         self.update_trim_lines_visibility(False)
+        self.play_cursor = pg.InfiniteLine(pos=0, angle=90, movable=False,
+                                           pen=pg.mkPen(color='#222222', width=2))
+        self.play_cursor.setZValue(10)
+        self.plot_widget.addItem(self.play_cursor)
+        self.play_cursor.hide()
         
         # Controls
         ctrl_layout = QHBoxLayout()
@@ -425,6 +431,11 @@ class AudioRecorder(QMainWindow):
         return False
 
     def update_ui(self):
+        if self.is_playing:
+            elapsed = max(0, time.monotonic() - self.playback_started_at)
+            position = min(self.playback_end_sample,
+                           self.playback_start_sample + elapsed * self.playback_rate)
+            self.play_cursor.setPos(position)
         error = getattr(self.stream, 'error', None)
         if self.is_recording and isinstance(error, Exception):
             self.toggle_record()
@@ -477,6 +488,12 @@ class AudioRecorder(QMainWindow):
                 
                 # Play stereo data
                 sd.play(trimmed, play_rate)
+                self.playback_start_sample = max(0, min(int(self.trim_start_line.value()), len(self.audio_data) - 1))
+                self.playback_end_sample = self.playback_start_sample + len(trimmed)
+                self.playback_rate = play_rate
+                self.playback_started_at = time.monotonic()
+                self.play_cursor.setPos(self.playback_start_sample)
+                self.play_cursor.show()
                 self.is_playing = True
                 self.play_btn.setText("⏹ 停止")
                 
@@ -496,6 +513,7 @@ class AudioRecorder(QMainWindow):
     def auto_stop_playback(self):
         sd.stop()
         self.is_playing = False
+        self.play_cursor.hide()
         self.play_btn.setText("▶️ 再生 (トリミング範囲)")
         if hasattr(self, 'play_timer'):
             self.play_timer.stop()
