@@ -1,4 +1,6 @@
 import numpy as np
+import subprocess
+import sys
 
 from recovery import RecordingJournal, find_recordings
 
@@ -27,3 +29,22 @@ def test_active_recording_is_not_offered_to_another_instance(tmp_path):
     journal.append(np.ones((2, 2), dtype=np.float32))
     assert find_recordings(tmp_path) == []
     journal.discard()
+
+
+def test_abrupt_process_exit_leaves_recoverable_audio(tmp_path):
+    script = '''import os, sys
+import numpy as np
+from recovery import RecordingJournal
+journal = RecordingJournal(sys.argv[1], 48000)
+journal.start()
+journal.append(np.full((4800, 2), 0.25, dtype=np.float32))
+os._exit(0)
+'''
+    subprocess.run([sys.executable, '-c', script, str(tmp_path)], check=True)
+    candidates = find_recordings(tmp_path)
+    assert len(candidates) == 1
+    data = candidates[0].read()
+    assert len(data) == 4800
+    np.testing.assert_array_equal(data, np.full((4800, 2), 0.25, dtype=np.float32))
+    data._mmap.close()
+    candidates[0].discard()

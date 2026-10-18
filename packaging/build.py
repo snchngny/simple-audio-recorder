@@ -7,6 +7,8 @@ import re
 import shutil
 import subprocess
 import sys
+import hashlib
+import json
 
 ROOT = Path(__file__).resolve().parents[1]
 NAME = 'SimpleAudioRecorder'
@@ -25,6 +27,10 @@ def main():
         raise RuntimeError('Windows または macOS で実行してください')
     build = ROOT / 'build'
     build.mkdir(exist_ok=True)
+    inputs = ('main.py', 'audio_processing.py', 'recovery.py', 'loopback.py',
+              'requirements.txt', 'requirements-build.txt', 'LICENSE', 'THIRD_PARTY_NOTICES.md',
+              'PRIVACY.md', 'VERSION', 'packaging/build.py')
+    source_hashes = {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in inputs}
     notices = build / 'THIRD_PARTY_LICENSES.txt'
     run(sys.executable, '-m', 'piplicenses', '--format=plain-vertical',
         '--with-license-file', '--no-license-path',
@@ -38,6 +44,8 @@ def main():
             '--workpath', str(build / 'pyinstaller'), '--distpath', str(ROOT / 'dist'),
             '--add-data', f'{ROOT / "LICENSE"}:.',
             '--add-data', f'{ROOT / "THIRD_PARTY_NOTICES.md"}:.',
+            '--add-data', f'{ROOT / "PRIVACY.md"}:.',
+            '--add-data', f'{ROOT / "VERSION"}:.',
             '--add-data', f'{notices}:.', '--add-data', f'{build / "environment.txt"}:.']
     if sys.platform == 'darwin':
         args += ['--osx-bundle-identifier', 'com.snchngny.simple-audio-recorder']
@@ -52,6 +60,11 @@ def main():
         ])
     run(*args, ROOT / 'main.py', env=build_env)
     if sys.platform == 'win32':
+        if any(hashlib.sha256((ROOT / path).read_bytes()).hexdigest() != expected
+               for path, expected in source_hashes.items()):
+            raise RuntimeError('ビルド中にソースが変わりました。再ビルドしてください')
+        provenance = {'version': version, 'inputs': source_hashes}
+        (ROOT / 'dist' / NAME / 'bundle-info.json').write_text(json.dumps(provenance, indent=2), encoding='utf-8')
         if '--bundle-only' in sys.argv:
             return
         compiler = shutil.which('ISCC')

@@ -160,6 +160,7 @@ class AudioRecorder(QMainWindow):
         self.journal = None
         self.dirty = False
         self.recording_peak = 0.0
+        self.clipped_channels = [False, False]
         self.capture_warning = ''
         
         # State
@@ -179,6 +180,9 @@ class AudioRecorder(QMainWindow):
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status.showMessage("待機中...")
+        help_menu = self.menuBar().addMenu('ヘルプ')
+        help_menu.addAction('プライバシー', self.show_privacy)
+        help_menu.addAction('ライセンスと対応ソース', self.show_licenses)
 
         # Central Layout
         central = QWidget()
@@ -216,17 +220,17 @@ class AudioRecorder(QMainWindow):
         # Controls
         ctrl_layout = QHBoxLayout()
         
-        self.rec_btn = QPushButton("🔴 録音")
+        self.rec_btn = QPushButton("● 録音")
         self.rec_btn.setStyleSheet("font-weight: bold;")
         self.rec_btn.clicked.connect(self.toggle_record)
         ctrl_layout.addWidget(self.rec_btn)
         
-        self.play_btn = QPushButton("▶️ 再生 (トリミング範囲)")
+        self.play_btn = QPushButton("▶ 再生 (トリミング範囲)")
         self.play_btn.clicked.connect(self.toggle_play)
         self.play_btn.setEnabled(False)
         ctrl_layout.addWidget(self.play_btn)
         
-        self.save_btn = QPushButton("💾 保存")
+        self.save_btn = QPushButton("保存")
         self.save_btn.clicked.connect(self.save_audio)
         self.save_btn.setEnabled(False)
         ctrl_layout.addWidget(self.save_btn)
@@ -235,11 +239,12 @@ class AudioRecorder(QMainWindow):
         speed_layout = QHBoxLayout()
         speed_layout.addWidget(QLabel("速度:"))
         self.speed_combo = QComboBox()
-        self.speed_combo.addItem("Default (1.0x)", 1.0)
+        self.speed_combo.addItem("1.0倍（元の速度）", 1.0)
+        self.speed_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.speed_combo.currentIndexChanged.connect(self.on_trim_changed)
         speed_layout.addWidget(self.speed_combo)
         
-        self.rnd_speed_btn = QPushButton("🎲 ランダム速度")
+        self.rnd_speed_btn = QPushButton("ランダム速度")
         self.rnd_speed_btn.clicked.connect(self.randomize_speed)
         speed_layout.addWidget(self.rnd_speed_btn)
         
@@ -247,7 +252,7 @@ class AudioRecorder(QMainWindow):
         
         ctrl_layout.addStretch()
         
-        self.settings_btn = QPushButton("⚙️ 設定")
+        self.settings_btn = QPushButton("設定")
         self.settings_btn.clicked.connect(self.open_settings)
         ctrl_layout.addWidget(self.settings_btn)
         
@@ -338,11 +343,24 @@ class AudioRecorder(QMainWindow):
             self.settings.setValue("audio_channel_r", opts["channel_r"])
             self.settings.setValue("save_dir", opts["save_dir"])
             self.status.showMessage("設定を保存しました", 3000)
+
+    def show_privacy(self):
+        root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
+        policy = (root / 'PRIVACY.md').read_text(encoding='utf-8')
+        QMessageBox.information(self, 'プライバシー', policy)
+
+    def show_licenses(self):
+        QMessageBox.information(self, 'ライセンスと対応ソース',
+            '本アプリはGPL-3.0-onlyです。購入者によるGPLに沿った再配布も可能です。\n'
+            'LICENSE、THIRD_PARTY_NOTICES.md、THIRD_PARTY_LICENSES.txtをアプリに同梱しています。\n'
+            '同じ版の対応ソース・依存版一覧・ライセンスは以下のReleasesから取得できます。\n'
+            'https://github.com/snchngny/simple-audio-recorder/releases\n\n'
+            'アプリのライセンスは、録音した素材の権利を付与するものではありません。')
             
     def randomize_speed(self):
         import random
         new_speed = round(random.uniform(1.1, 3.0), 2)
-        label = f"Random ({new_speed}x)"
+        label = f"ランダム {new_speed:.2f}倍"
         self.speed_combo.addItem(label, new_speed)
         self.speed_combo.setCurrentIndex(self.speed_combo.count() - 1)
             
@@ -402,13 +420,14 @@ class AudioRecorder(QMainWindow):
                 self.recorded_chunks = deque()
                 self.total_recorded_samples = 0
                 self.recording_peak = 0.0
+                self.clipped_channels = [False, False]
                 self.capture_warning = ''
                 self.dirty = False
                 self.curve.setData([])
                 self.update_trim_lines_visibility(False)
                 self.settings_btn.setEnabled(False)
                 self.is_recording = True
-                self.rec_btn.setText("⏹ 録音停止")
+                self.rec_btn.setText("■ 録音停止")
                 self.rec_btn.setStyleSheet("color: red; font-weight: bold;")
                 self.status.showMessage(f"🔴 録音中... デバイス: {device_info['name']} (L:CH {channel_l + 1}, R:CH {channel_r + 1})")
                 
@@ -434,7 +453,7 @@ class AudioRecorder(QMainWindow):
                 
             self.is_recording = False
             self.settings_btn.setEnabled(True)
-            self.rec_btn.setText("🔴 録音")
+            self.rec_btn.setText("● 録音")
             self.rec_btn.setStyleSheet("font-weight: bold;")
             
             # Drain queue
@@ -544,8 +563,9 @@ class AudioRecorder(QMainWindow):
                 db = 20 * np.log10(max(channel_peak, 1e-6))
                 meter.setValue(int(np.clip(db + 60, 0, 60) * 10))
                 meter.setFormat(f'{db:.1f} dBFS' if channel_peak else '無音')
-                meter.setStyleSheet('QProgressBar::chunk { background: #d32f2f; }' if channel_peak >= 1 else '')
-                if channel_peak >= 1:
+                self.clipped_channels[channel] |= channel_peak >= 1
+                meter.setStyleSheet('QProgressBar::chunk { background: #d32f2f; }' if self.clipped_channels[channel] else '')
+                if self.clipped_channels[channel]:
                     meter.setFormat(f'{db:.1f} dBFS / 音割れの可能性')
             self.dirty = True
             return True
@@ -572,7 +592,7 @@ class AudioRecorder(QMainWindow):
                     self.stream.close()
                     self.stream = None
                 self.is_recording = False
-                self.rec_btn.setText('🔴 録音')
+                self.rec_btn.setText('● 録音')
                 self.settings_btn.setEnabled(True)
                 if self.journal is not None:
                     self.audio_data = self.journal.read()
@@ -632,7 +652,7 @@ class AudioRecorder(QMainWindow):
                 self.play_cursor.setPos(self.playback_start_sample)
                 self.play_cursor.show()
                 self.is_playing = True
-                self.play_btn.setText("⏹ 停止")
+                self.play_btn.setText("■ 停止")
                 
                 # Auto stop logic
                 duration_ms = int((len(rendered) / EXPORT_RATE) * 1000)
@@ -651,7 +671,7 @@ class AudioRecorder(QMainWindow):
         sd.stop()
         self.is_playing = False
         self.play_cursor.hide()
-        self.play_btn.setText("▶️ 再生 (トリミング範囲)")
+        self.play_btn.setText("▶ 再生 (トリミング範囲)")
         if hasattr(self, 'play_timer'):
             self.play_timer.stop()
         self.status.showMessage("再生停止")

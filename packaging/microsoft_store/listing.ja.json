@@ -1,0 +1,22 @@
+{
+  "language": "ja-JP",
+  "proposed_name": "Simple Audio Recorder",
+  "short_description": "音を録って、切り出して、ランダム速度でサンプル制作",
+  "description": "気になる音を収録し、偶然の速度変化から新しいサンプル素材を探す、小さな録音アプリです。\n\nWindowsのPC再生音またはマイクを録音し、波形で必要な範囲を選択。ランダム速度ボタンで音の長さと音程を一緒に変え、試聴して48kHz・16bitステレオWAVへ保存できます。元録音を加工しないため、同じ音から別のバリエーションを作れます。\n\n入力L/Rのピーク表示、未保存確認、端末内の元録音の復旧キャッシュに対応。音声の処理と保存は端末内で行い、広告・アカウント登録は不要です。\n\n短いサンプルの制作向けです。ランダム速度は1.1〜3.0倍で、音程を保つテンポ変更、BPM解析、DAWとの同期、長時間録音の保証はありません。現在の書出し形式はWAVのみです。保護されたコンテンツや出力機器によっては録音できない場合があります。\n\n自分で作った音や利用許諾を得た音など、利用する権利のある素材を使用してください。録音・加工によって元音源の権利が消えることはありません。\n\n本アプリはGPL-3.0-onlyのオープンソースです。対応ソースと無料の配布版はGitHubで公開されます。Store版の購入は、Storeからの導入・更新と開発を支援する選択肢です。Store版専用の音声機能はありません。",
+  "features": [
+    "Windowsの既定再生デバイスをWASAPIループバックで録音",
+    "マイク入力、L/Rチャンネル割当、入力ピーク表示",
+    "波形で範囲を切り出し、再生位置を確認",
+    "ランダム速度で長さと音程を変え、元録音から何度も試す",
+    "48kHz・16bitステレオWAVへ書き出し",
+    "未保存確認と端末内の元録音の復旧キャッシュ"
+  ],
+  "keywords": ["サンプル", "録音", "効果音", "サンプリング", "ランダム", "音楽制作", "WAV"],
+  "suggested_category": "Music",
+  "website_url": "https://github.com/snchngny/simple-audio-recorder",
+  "support_url": "https://github.com/snchngny/simple-audio-recorder/issues",
+  "planned_privacy_url": "https://github.com/snchngny/simple-audio-recorder/blob/main/PRIVACY.md",
+  "planned_source_url": "https://github.com/snchngny/simple-audio-recorder/releases",
+  "target_price": {"market": "JP", "currency": "JPY", "amount": 500, "billing": "one_time", "configured_in_store": false},
+  "submission_status": "draft_materials_only"
+}

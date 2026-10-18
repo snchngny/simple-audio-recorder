@@ -1,6 +1,6 @@
 # Simple Audio Recorder
 
-Windows・macOS向けの小さな録音アプリ。入力をL/Rへ割り当て、波形で範囲を選び、試聴して16bitステレオWAVへ保存する
+Windows・macOS向けの小さなサンプル制作アプリ。気になる音を録り、波形で切り出し、ランダム速度で長さと音程を変えてWAVへ保存する。入力をL/Rへ割り当てられる
 
 ## インストール
 
@@ -96,3 +96,7 @@ git push origin v0.3.1
 依存ライブラリは各ライセンスに従う。[利用ライブラリ](THIRD_PARTY_NOTICES.md)を参照
 
 類似OSSの比較・改善候補は[調査メモ](docs/oss-comparison.md)を参照
+
+Microsoft Store向けのMSIX・説明・提出手順は[販売準備](packaging/microsoft_store/README.md)を参照。登録・製品ID・500円の価格設定・審査は未完了。[プライバシーポリシー](PRIVACY.md)はアプリ内のヘルプからも閲覧できる
+
+音声の加工で元素材の権利が消えるわけではない。自作音や利用許諾を得た音など、利用する権利のある素材を使用する
