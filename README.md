@@ -31,7 +31,8 @@ Windowsの発行元署名、MacのDeveloper ID署名・Apple公証は未設定�
 
 - Windows：「設定 → プライバシーとセキュリティ → マイク」でマイクとデスクトップアプリのアクセスを確認
 - Mac：「システム設定 → プライバシーとセキュリティ → マイク」でアプリを許可
-- 入力デバイスとL/R割当を確認。PC再生音の録音にはループバック等の入力が別途必要
+- 入力デバイスとL/R割当を確認
+- WindowsでPC再生音を録る場合は、入力デバイスで「PC再生音（既定の出力 / WASAPI）」を選ぶ。ドライバー追加は不要。録音開始時のWindows既定再生デバイスを48kHzで録音する。Macは仮想入力等が別途必要
 
 録音は停止するまでメモリに保持するため、短い素材向け。自動保存・復旧は未対応
 
@@ -71,9 +72,9 @@ Windowsでは[Inno Setup 6](https://jrsoftware.org/isinfo.php)が必要
 リリース時は `VERSION` を更新してcommitし、その版と一致するタグをpushする
 
 ```bash
-git tag v0.2.0
+git tag v0.3.0
 git push origin main
-git push origin v0.2.0
+git push origin v0.3.0
 ```
 
 全OS成功後、インストーラー・対応ソース・依存版一覧・ライセンス・SHA256を同じタグの下書きReleaseへ添付

@@ -30,7 +30,7 @@ def main():
         '--with-license-file', '--no-license-path',
         '--output-file', notices,
         '--packages', 'PyQt6', 'PyQt6-Qt6', 'PyQt6-sip', 'sounddevice',
-        'numpy', 'scipy', 'pyqtgraph', 'cffi', 'pycparser', 'colorama')
+        'numpy', 'scipy', 'pyqtgraph', 'cffi', 'pycparser', 'colorama', 'SoundCard')
     freeze = subprocess.check_output([sys.executable, '-m', 'pip', 'freeze'], text=True)
     (build / 'environment.txt').write_text(freeze, encoding='utf-8')
     args = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean',

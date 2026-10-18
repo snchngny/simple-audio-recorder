@@ -10,6 +10,7 @@
 | Qt | LGPLv3 / GPL / 商用、同梱モジュールの条件に従う。[ライセンス](https://doc.qt.io/qt-6/licensing.html)・[Qtソース](https://download.qt.io/archive/qt/) |
 | PyQt6-sip | [ソース・ライセンス](https://pypi.org/project/PyQt6-sip/) |
 | sounddevice / PortAudio | MIT系。[sounddevice](https://github.com/spatialaudio/python-sounddevice)・[PortAudio](https://github.com/PortAudio/portaudio) |
+| SoundCard（Windowsのみ） | BSD-3-Clause。[ソース](https://github.com/bastibe/SoundCard) |
 | NumPy | BSD系。[ソース](https://github.com/numpy/numpy) |
 | SciPy | BSD系および同梱数値計算ライブラリの条件。[ソース](https://github.com/scipy/scipy) |
 | pyqtgraph | MIT。[ソース](https://github.com/pyqtgraph/pyqtgraph) |

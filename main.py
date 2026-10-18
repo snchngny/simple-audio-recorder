@@ -6,6 +6,7 @@ import numpy as np
 import sounddevice as sd
 from scipy.io import wavfile
 import pyqtgraph as pg
+from loopback import LOOPBACK_DEVICE, LoopbackStream, loopback_info
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
@@ -74,7 +75,7 @@ class SettingsDialog(QDialog):
             input_devices = [(idx, d) for idx, d in enumerate(devices) if d['max_input_channels'] > 0]
             hostapis = sd.query_hostapis()
             
-            saved_device = self.settings.value("audio_device", type=int)
+            saved_device = self.settings.value("audio_device", defaultValue=-1, type=int)
             default_device_idx = sd.default.device[0]
             target_device_idx = saved_device if saved_device is not None and saved_device != -1 else default_device_idx
             
@@ -85,11 +86,15 @@ class SettingsDialog(QDialog):
                 self.device_combo.addItem(f"{d['name']} / {host} ({d['max_input_channels']}ch)", actual_idx)
                 if actual_idx == target_device_idx:
                     selected_idx = i
+            if sys.platform == 'win32':
+                if target_device_idx == LOOPBACK_DEVICE:
+                    selected_idx = self.device_combo.count()
+                self.device_combo.addItem('PC再生音（既定の出力 / WASAPI）', LOOPBACK_DEVICE)
                     
             self.device_combo.setCurrentIndex(selected_idx)
             self.device_combo.blockSignals(False)
             self.update_channels()
-            if not input_devices:
+            if not self.device_combo.count():
                 self.device_combo.addItem("入力デバイスがありません", None)
         except Exception as e:
             self.device_combo.addItem(f"デバイス取得エラー: {e}", None)
@@ -102,7 +107,7 @@ class SettingsDialog(QDialog):
             return
             
         try:
-            device_info = sd.query_devices(device_idx)
+            device_info = loopback_info() if device_idx == LOOPBACK_DEVICE else sd.query_devices(device_idx)
             max_channels = device_info['max_input_channels']
             
             # Use max(..., 0) to avoid negative defaults if max_channels is 0 somehow
@@ -266,7 +271,7 @@ class AudioRecorder(QMainWindow):
             self.update_trim_lines_visibility(False)
             
             # Load Device Settings
-            device_idx = self.settings.value("audio_device", type=int)
+            device_idx = self.settings.value("audio_device", defaultValue=-1, type=int)
             if device_idx is None or device_idx == -1:
                 try: device_idx = sd.default.device[0]
                 except: device_idx = None
@@ -275,14 +280,16 @@ class AudioRecorder(QMainWindow):
             channel_r = self.settings.value("audio_channel_r", defaultValue=1, type=int)
                 
             try:
-                device_info = sd.query_devices(device_idx, 'input')
+                is_loopback = device_idx == LOOPBACK_DEVICE
+                device_info = loopback_info() if is_loopback else sd.query_devices(device_idx, 'input')
                 max_channels = device_info['max_input_channels']
                 if max_channels < 1:
                     raise ValueError("入力チャンネルがありません。設定から入力デバイスを選択してください")
                 # Use the device's native rate (often 48 kHz on Windows).
                 self.sample_rate = int(device_info['default_samplerate'])
-                sd.check_input_settings(device=device_idx, channels=max_channels,
-                                        samplerate=self.sample_rate, dtype='float32')
+                if not is_loopback:
+                    sd.check_input_settings(device=device_idx, channels=max_channels,
+                                            samplerate=self.sample_rate, dtype='float32')
                 
                 # Boundary check for channel index
                 if channel_l >= max_channels or channel_l < 0: channel_l = 0
@@ -292,7 +299,7 @@ class AudioRecorder(QMainWindow):
                 self.current_channel_r = channel_r
 
                 # Start stream fetching ALL channels to prevent CoreAudio slicing issues
-                self.stream = sd.InputStream(
+                self.stream = LoopbackStream(device_info, self.audio_callback) if is_loopback else sd.InputStream(
                     device=device_idx,
                     channels=max_channels,
                     samplerate=self.sample_rate,
@@ -418,6 +425,11 @@ class AudioRecorder(QMainWindow):
         return False
 
     def update_ui(self):
+        error = getattr(self.stream, 'error', None)
+        if self.is_recording and isinstance(error, Exception):
+            self.toggle_record()
+            QMessageBox.warning(self, '録音が中断されました', str(error))
+            return
         if self.is_recording:
             if self.drain_queue():
                 view_len = self.sample_rate * 5

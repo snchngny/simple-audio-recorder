@@ -108,3 +108,35 @@ def test_duplicate_devices_keep_actual_index(app, monkeypatch, tmp_path):
     assert dialog.device_combo.itemData(1) == 1
     assert 'WASAPI' in dialog.device_combo.itemText(1)
     dialog.close()
+
+
+def test_pc_playback_source_uses_loopback_and_preserves_stereo(recorder, monkeypatch):
+    recorder.settings.setValue('audio_device', main.LOOPBACK_DEVICE)
+    info = {'name': 'PC playback', 'max_input_channels': 2, 'default_samplerate': 48000}
+    monkeypatch.setattr(main, 'loopback_info', lambda: info)
+    stream = Mock(error=None)
+    factory = Mock(return_value=stream)
+    monkeypatch.setattr(main, 'LoopbackStream', factory)
+    recorder.toggle_record()
+    assert recorder.is_recording
+    factory.assert_called_once_with(info, recorder.audio_callback)
+    data = np.array([[0.25, -0.5]], dtype=np.float32)
+    recorder.audio_callback(data, 1, None, None)
+    recorder.toggle_record()
+    np.testing.assert_array_equal(recorder.audio_data, data)
+    stream.stop.assert_called_once()
+    stream.close.assert_called_once()
+
+
+def test_loopback_runtime_error_stops_recording_and_keeps_audio(recorder, monkeypatch):
+    recorder.is_recording = True
+    recorder.stream = Mock(error=RuntimeError('device unplugged'))
+    warning = Mock()
+    monkeypatch.setattr(main.QMessageBox, 'warning', warning)
+    data = np.array([[0.3, 0.4]], dtype=np.float32)
+    recorder.audio_queue.put(data)
+    recorder.update_ui()
+    assert not recorder.is_recording
+    assert recorder.stream is None
+    np.testing.assert_array_equal(recorder.audio_data, data)
+    warning.assert_called_once()
