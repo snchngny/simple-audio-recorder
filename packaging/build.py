@@ -100,7 +100,7 @@ def main():
             raise RuntimeError('build/dmg が残っています。内容を確認してから別の出力先へ退避してください')
         shutil.copytree(app, staged_app, symlinks=True)
         (stage / 'Applications').symlink_to('/Applications')
-        run('hdiutil', 'create', '-volname', 'Simple Audio Recorder',
+        run('hdiutil', 'create', '-volname', 'Simple Sample Recorder',
             '-srcfolder', stage, '-ov', '-format', 'UDZO',
             ROOT / 'dist' / f'{NAME}-v{version}-macos-{platform.machine()}.dmg')
 

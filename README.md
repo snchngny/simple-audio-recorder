@@ -1,6 +1,8 @@
-# Simple Audio Recorder
+# Simple Sample Recorder
 
 Windows・macOS向けの小さなサンプル制作アプリ。気になる音を録り、波形で切り出し、ランダム速度で長さと音程を変えてWAVへ保存する。入力をL/Rへ割り当てられる
+
+Microsoft Storeでの予約名は「Simple Sample Recorder」。GitHub repo名・実行ファイル名は互換性のため従来名を使用する
 
 ## インストール
 

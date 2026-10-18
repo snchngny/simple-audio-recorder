@@ -151,7 +151,7 @@ class SettingsDialog(QDialog):
 class AudioRecorder(QMainWindow):
     def __init__(self, recovery_dir=None, restore=True):
         super().__init__()
-        self.setWindowTitle("Simple Audio Recorder (Stereo)")
+        self.setWindowTitle("Simple Sample Recorder (Stereo)")
         self.resize(600, 250)
         
         self.settings = QSettings("com.python.audiorec", "SimpleAudioRecorder")

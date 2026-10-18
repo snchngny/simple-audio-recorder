@@ -2,7 +2,7 @@
 
 Windows x64の買い切り版をMSIXで提出するための資材。日本の販売価格は500円。価格はMSIXではなくPartner Centerで設定する
 
-現時点では開発者登録・名前予約・正式製品IDが未取得。検証用MSIXは提出不可。登録や契約、税・銀行情報、審査提出、販売開始をこのスクリプトは行わない
+開発者登録と「Simple Sample Recorder」の名前予約は完了。Store IDは `9PB7NZ83706Q`、公開開発者名は `snchngny`。正式IDはGit管理外の `.local/store-identity.json` に保持する。価格設定・検証・審査はPartner Centerの状態を確認する。検証用MSIXは提出不可。登録や契約、税・銀行情報、審査提出、販売開始をこのスクリプトは行わない
 
 ## ビルド
 
