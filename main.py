@@ -8,6 +8,7 @@ import sounddevice as sd
 from scipy.io import wavfile
 import pyqtgraph as pg
 from loopback import LOOPBACK_DEVICE, LoopbackStream, loopback_info
+from audio_processing import EXPORT_RATE, render_sample
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
@@ -484,13 +485,13 @@ class AudioRecorder(QMainWindow):
             
             try:
                 speed = self.speed_combo.currentData()
-                play_rate = int(self.sample_rate * speed)
+                rendered = render_sample(trimmed, self.sample_rate, speed)
                 
                 # Play stereo data
-                sd.play(trimmed, play_rate)
+                sd.play(rendered, EXPORT_RATE)
                 self.playback_start_sample = max(0, min(int(self.trim_start_line.value()), len(self.audio_data) - 1))
                 self.playback_end_sample = self.playback_start_sample + len(trimmed)
-                self.playback_rate = play_rate
+                self.playback_rate = self.sample_rate * speed
                 self.playback_started_at = time.monotonic()
                 self.play_cursor.setPos(self.playback_start_sample)
                 self.play_cursor.show()
@@ -498,7 +499,7 @@ class AudioRecorder(QMainWindow):
                 self.play_btn.setText("⏹ 停止")
                 
                 # Auto stop logic
-                duration_ms = int((len(trimmed) / play_rate) * 1000)
+                duration_ms = int((len(rendered) / EXPORT_RATE) * 1000)
                 self.play_timer = QTimer()
                 self.play_timer.setSingleShot(True)
                 self.play_timer.timeout.connect(self.auto_stop_playback)
@@ -538,11 +539,11 @@ class AudioRecorder(QMainWindow):
         if filepath:
             try:
                 speed = self.speed_combo.currentData()
-                save_rate = int(self.sample_rate * speed)
+                rendered = render_sample(trimmed, self.sample_rate, speed)
                 # Multiply by 32767 and cast to int16 for standard WAV format
-                scaled = np.clip(trimmed, -1.0, 1.0) # Prevent clipping wrap-around
+                scaled = np.clip(rendered, -1.0, 1.0) # Prevent clipping wrap-around
                 scaled = np.int16(scaled * 32767) # Shape is (N, 2), wavfile can handle it properly!
-                wavfile.write(filepath, save_rate, scaled)
+                wavfile.write(filepath, EXPORT_RATE, scaled)
                 self.status.showMessage(f"保存しました: {os.path.basename(filepath)} (速度: {speed}x)", 7000)
             except Exception as e:
                 QMessageBox.critical(self, "エラー", f"保存に失敗しました:\n{e}")
